@@ -20,6 +20,26 @@ resource "azurerm_network_security_group" "databricks_private" {
   tags                = var.tags
 }
 
+resource "azurerm_network_security_group" "aks" {
+  name                = "${var.name}-aks-nsg"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  tags                = var.tags
+
+  security_rule {
+    name                       = "allow-kafka-inbound"
+    priority                   = 1001
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range         = "*"
+    destination_port_range    = "9092"
+    source_address_prefix     = "*"  # We'll tighten this to ACI CIDR if available
+    destination_address_prefix = "*"
+    description               = "Allow inbound traffic to Kafka broker"
+  }
+}
+
 resource "azurerm_subnet" "aks" {
   name                 = "aks-subnet"
   resource_group_name  = var.resource_group_name
@@ -73,4 +93,9 @@ resource "azurerm_subnet" "databricks_private" {
 resource "azurerm_subnet_network_security_group_association" "databricks_private" {
   subnet_id                 = azurerm_subnet.databricks_private.id
   network_security_group_id = azurerm_network_security_group.databricks_private.id
+}
+
+resource "azurerm_subnet_network_security_group_association" "aks" {
+  subnet_id                 = azurerm_subnet.aks.id
+  network_security_group_id = azurerm_network_security_group.aks.id
 } 

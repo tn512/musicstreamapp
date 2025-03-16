@@ -75,9 +75,9 @@ module "databricks" {
   name                = "${local.resource_prefix}-databricks"
   resource_group_name = module.databricks_resource_group.name
   location           = module.databricks_resource_group.location
-  virtual_network_id = module.databricks_vnet.id
-  public_subnet_name = module.databricks_vnet.databricks_public_subnet_name
-  private_subnet_name = module.databricks_vnet.databricks_private_subnet_name
+  virtual_network_id = module.databricks_vnet.vnet_id
+  public_subnet_name = "databricks-public"
+  private_subnet_name = "databricks-private"
   public_subnet_nsg_association_id = module.databricks_vnet.databricks_public_nsg_association_id
   private_subnet_nsg_association_id = module.databricks_vnet.databricks_private_nsg_association_id
   tags               = local.common_tags

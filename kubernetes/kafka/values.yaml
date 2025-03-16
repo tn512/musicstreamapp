@@ -6,6 +6,7 @@ kraft:
 
 controller:
   replicaCount: 0
+  automountServiceAccountToken: true
 
 zookeeper:
   enabled: true
@@ -21,12 +22,15 @@ zookeeper:
 listeners:
   client:
     protocol: PLAINTEXT
+    name: CLIENT
   interbroker:
     protocol: PLAINTEXT
+    name: INTERNAL
 
 broker:
   replicaCount: 2
   heapOpts: "-Xmx1024m -Xms1024m"
+  automountServiceAccountToken: true
   resources:
     requests:
       memory: "1Gi"
@@ -41,9 +45,23 @@ broker:
     offsets.topic.compression.codec=0
     offsets.retention.minutes=10080
     offsets.retention.check.interval.ms=600000
+    inter.broker.listener.name=INTERNAL
 
 auth:
   clientProtocol: plaintext
   interBrokerProtocol: plaintext
   sasl:
     enabled: false
+
+rbac:
+  create: true
+
+service:
+  type: LoadBalancer
+  ports:
+    client: 9092
+    internal: 9094
+
+# Let's use a simpler approach - create a separate service for broker 1
+externalAccess:
+  enabled: false

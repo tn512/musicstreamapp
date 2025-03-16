@@ -3,6 +3,8 @@ import time
 import random
 import logging
 import argparse
+import socket
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Any
 
@@ -10,6 +12,7 @@ import pandas as pd
 import numpy as np
 from faker import Faker
 from kafka import KafkaProducer
+from kafka.client_async import BrokerConnection
 
 # Configure logging
 logging.basicConfig(
@@ -17,6 +20,48 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Store the original getaddrinfo function
+original_getaddrinfo = socket.getaddrinfo
+
+# Custom DNS resolver to handle Kafka advertised listeners
+def custom_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    # Check if this is a Kafka broker hostname
+    if 'kafka' in host.lower() or 'broker' in host.lower():
+        # Extract broker ID if present in the hostname
+        broker_id = None
+        if '-' in host:
+            parts = host.split('-')
+            try:
+                # Try to extract broker ID from hostname (e.g., kafka-broker-1 -> 1)
+                broker_id = int(parts[-1])
+                logger.info(f"Extracted broker ID {broker_id} from hostname {host}")
+            except (ValueError, IndexError):
+                logger.info(f"Could not extract broker ID from hostname {host}")
+        
+        # Map broker IDs to their respective IPs
+        broker_ips = {
+            # Default bootstrap server (broker 0)
+            None: os.environ.get('KAFKA_BOOTSTRAP_SERVER', '').split(':')[0],
+            # Broker 0 (kafka-broker-0)
+            0: os.environ.get('KAFKA_BOOTSTRAP_SERVER', '').split(':')[0],
+            # Broker 1 (kafka-broker-1) - using the kafka-external service
+            1: '135.234.226.183'  # This is the EXTERNAL-IP of kafka-external service
+        }
+        
+        # Get the appropriate IP for this broker
+        ip = broker_ips.get(broker_id, broker_ips[None])
+        
+        if ip:
+            logger.info(f"Redirecting DNS lookup for {host}:{port} to {ip}:{port}")
+            # Return a fake DNS result with the mapped IP
+            return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, '', (ip, port))]
+    
+    # For all other hostnames, use the original getaddrinfo
+    return original_getaddrinfo(host, port, family, type, proto, flags)
+
+# Replace the socket.getaddrinfo with our custom version
+socket.getaddrinfo = custom_getaddrinfo
 
 def json_serial(obj: Any) -> Any:
     """JSON serializer for objects not serializable by default json code"""
@@ -82,14 +127,33 @@ class MusicEventGenerator:
         # Initialize Kafka producer if bootstrap servers are provided
         self.producer = None
         if kafka_bootstrap_servers:
-            self.producer = KafkaProducer(
-                bootstrap_servers=kafka_bootstrap_servers,
-                value_serializer=lambda x: json.dumps(x, default=json_serial).encode('utf-8')
-            )
+            logger.info(f"Initializing Kafka producer with bootstrap servers: {kafka_bootstrap_servers}")
+            try:
+                self.producer = KafkaProducer(
+                    bootstrap_servers=kafka_bootstrap_servers,
+                    value_serializer=lambda x: json.dumps(x, default=json_serial).encode('utf-8'),
+                    security_protocol="PLAINTEXT",
+                    api_version=(2, 0, 0),
+                    client_id="event-generator",
+                    connections_max_idle_ms=10000,
+                    request_timeout_ms=30000,
+                    retry_backoff_ms=500,
+                    # Add these parameters to prevent DNS resolution issues
+                    reconnect_backoff_ms=1000,
+                    reconnect_backoff_max_ms=10000,
+                    # Disable metadata refresh to prevent discovering new brokers
+                    metadata_max_age_ms=3600000
+                )
+                logger.info("Kafka producer initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize Kafka producer: {str(e)}")
+                self.producer = None
+        else:
+            logger.warning("No Kafka bootstrap servers provided. Events will be logged locally only.")
         
         # Load song data
         logger.info("Loading song data...")
-        self.songs_df = pd.read_csv('event_generator/data/songs_analysis.txt.gz', 
+        self.songs_df = pd.read_csv('data/songs_analysis.txt.gz', 
                                    compression='gzip', 
                                    sep='\t',
                                    header=None,
@@ -102,7 +166,7 @@ class MusicEventGenerator:
         
         # Load song metadata (artist, title) from listen_counts
         logger.info("Loading song metadata...")
-        self.song_metadata = pd.read_csv('event_generator/data/listen_counts.txt.gz',
+        self.song_metadata = pd.read_csv('data/listen_counts.txt.gz',
                                        compression='gzip',
                                        sep='\t',
                                        header=None,
@@ -125,7 +189,7 @@ class MusicEventGenerator:
         logger.info("Loading user agents...")
         try:
             # Load user agents from CSV file
-            user_agents_df = pd.read_csv('event_generator/data/user_agent.csv')
+            user_agents_df = pd.read_csv('data/user_agent.csv')
             self.user_agents = user_agents_df['useragent'].tolist()  # Using the correct column name from CSV
             
             if not self.user_agents:  # If no user agents loaded, use some defaults
@@ -282,10 +346,7 @@ class MusicEventGenerator:
             user_id, session_id, item_in_session,
             "Login", auth_success
         )
-        if self.producer:
-            self.producer.send('events', auth_event)
-        else:
-            print(auth_event)
+        self.send_event('auth_events', auth_event)
         item_in_session += 1
         
         if not auth_success:
@@ -299,10 +360,7 @@ class MusicEventGenerator:
                 user_id, session_id, current_page, 
                 item_in_session, auth_status
             )
-            if self.producer:
-                self.producer.send('events', page_event)
-            else:
-                print(page_event)
+            self.send_event('page_view_events', page_event)
             item_in_session += 1
             
             # Handle special pages
@@ -313,10 +371,7 @@ class MusicEventGenerator:
                         user_id, session_id, item_in_session,
                         prev_level=current_level
                     )
-                    if self.producer:
-                        self.producer.send('events', status_event)
-                    else:
-                        print(status_event)
+                    self.send_event('status_change_events', status_event)
                     item_in_session += 1
                     
                     # Update level if it was a subscription change
@@ -327,10 +382,7 @@ class MusicEventGenerator:
                 listen_event = self.generate_listen_event(
                     user_id, session_id, item_in_session
                 )
-                if self.producer:
-                    self.producer.send('events', listen_event)
-                else:
-                    print(listen_event)
+                self.send_event('listen_events', listen_event)
                 item_in_session += 1
                 
                 # Simulate listening duration
@@ -342,10 +394,7 @@ class MusicEventGenerator:
                     user_id, session_id, item_in_session,
                     "Logout", True
                 )
-                if self.producer:
-                    self.producer.send('events', auth_event)
-                else:
-                    print(auth_event)
+                self.send_event('auth_events', auth_event)
                 break
             
             # Get next page
@@ -354,13 +403,132 @@ class MusicEventGenerator:
             # Small delay between page views
             time.sleep(random.uniform(0.1, 0.5))
 
+    def send_event(self, topic: str, event: Dict[str, Any]) -> None:
+        """Send an event to a Kafka topic."""
+        if self.producer:
+            try:
+                # Log the event being sent
+                logger.info(f"Sending event to Kafka topic {topic}")
+                
+                # Try to send the event with retries for NotLeaderForPartitionError
+                max_retries = 3
+                retry_count = 0
+                success = False
+                
+                while not success and retry_count < max_retries:
+                    try:
+                        future = self.producer.send(topic, event)
+                        record_metadata = future.get(timeout=10)
+                        logger.info(f"Successfully delivered message to Kafka topic={record_metadata.topic} partition={record_metadata.partition} offset={record_metadata.offset}")
+                        success = True
+                    except Exception as e:
+                        if "NotLeaderForPartitionError" in str(e):
+                            retry_count += 1
+                            if retry_count < max_retries:
+                                logger.warning(f"NotLeaderForPartitionError encountered, retrying ({retry_count}/{max_retries})...")
+                                # Force metadata refresh to get updated leader information
+                                self.producer.flush()
+                                time.sleep(1)  # Short delay before retry
+                            else:
+                                logger.error(f"Failed to send event after {max_retries} retries: {str(e)}")
+                                logger.error(f"Event data: {json.dumps(event, default=json_serial)[:200]}...")
+                        else:
+                            # For other errors, don't retry
+                            logger.error(f"Failed to send event to Kafka topic {topic}: {str(e)}")
+                            logger.error(f"Event data: {json.dumps(event, default=json_serial)[:200]}...")
+                            break
+                
+            except Exception as e:
+                logger.error(f"Failed to send event to Kafka topic {topic}: {str(e)}")
+                logger.error(f"Event data: {json.dumps(event, default=json_serial)[:200]}...")  # Log truncated event data
+        else:
+            logger.warning(f"Kafka producer not available. Event for topic {topic} not sent.")
+
 def main():
     """Main function to run the event generator."""
     parser = argparse.ArgumentParser(description="Music Event Generator")
     parser.add_argument("--kafka-bootstrap-servers", type=str, help="Kafka bootstrap servers")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
     
-    generator = MusicEventGenerator(args.kafka_bootstrap_servers)
+    # Set debug logging if requested
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+        logger.info("Debug logging enabled")
+    
+    # Log the bootstrap servers for debugging
+    if args.kafka_bootstrap_servers:
+        logger.info(f"Using Kafka bootstrap servers: {args.kafka_bootstrap_servers}")
+        
+        # Extract host and port from bootstrap servers for direct connection testing
+        bootstrap_parts = args.kafka_bootstrap_servers.split(':')
+        if len(bootstrap_parts) >= 2:
+            kafka_host = bootstrap_parts[0]
+            kafka_port = bootstrap_parts[1]
+            logger.info(f"Extracted Kafka host: {kafka_host}, port: {kafka_port}")
+            
+            # Test network connectivity to Kafka broker
+            try:
+                logger.info(f"Testing direct TCP connection to Kafka broker at {kafka_host}:{kafka_port}...")
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(10)
+                s.connect((kafka_host, int(kafka_port)))
+                s.close()
+                logger.info(f"Successfully connected to Kafka broker at {kafka_host}:{kafka_port}")
+                
+                # Set environment variable to force Kafka client to use the provided bootstrap servers
+                os.environ['KAFKA_BOOTSTRAP_SERVER'] = kafka_host
+                logger.info(f"Set KAFKA_BOOTSTRAP_SERVER environment variable to {kafka_host}")
+            except Exception as e:
+                logger.error(f"Failed to connect directly to Kafka broker: {str(e)}")
+    else:
+        logger.warning("No Kafka bootstrap servers provided. Events will be logged locally only.")
+    
+    # Initialize the generator with retry logic
+    max_retries = 5
+    retry_count = 0
+    generator = None
+    
+    while retry_count < max_retries:
+        try:
+            generator = MusicEventGenerator(args.kafka_bootstrap_servers)
+            
+            # Test Kafka connectivity if a producer was created
+            if generator.producer:
+                try:
+                    logger.info("Testing Kafka connectivity...")
+                    test_event = {"message": "Test event", "timestamp": int(time.time() * 1000)}
+                    future = generator.producer.send("test_events", test_event)
+                    record_metadata = future.get(timeout=10)
+                    logger.info(f"Test message sent successfully to Kafka. Topic={record_metadata.topic}, Partition={record_metadata.partition}, Offset={record_metadata.offset}")
+                    break  # Successfully connected to Kafka
+                except Exception as e:
+                    logger.error(f"Failed to send test message to Kafka: {str(e)}")
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        wait_time = 5 * retry_count
+                        logger.info(f"Retrying Kafka connection in {wait_time} seconds (attempt {retry_count}/{max_retries})...")
+                        time.sleep(wait_time)
+                    else:
+                        logger.error(f"Failed to connect to Kafka after {max_retries} attempts. Continuing without Kafka.")
+                        break
+            else:
+                # No producer was created, so no need to retry
+                break
+        except Exception as e:
+            logger.error(f"Error initializing event generator: {e}")
+            retry_count += 1
+            if retry_count < max_retries:
+                wait_time = 5 * retry_count
+                logger.info(f"Retrying in {wait_time} seconds (attempt {retry_count}/{max_retries})...")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"Failed to initialize event generator after {max_retries} attempts.")
+                return
+    
+    if not generator:
+        logger.error("Failed to initialize event generator. Exiting.")
+        return
     
     logger.info("Starting event generation...")
     
