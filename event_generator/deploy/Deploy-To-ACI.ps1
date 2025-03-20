@@ -6,7 +6,8 @@ $CONTAINER_NAME = "event-generator"
 $TIMESTAMP = Get-Date -Format "yyyyMMddHHmmss"
 $IMAGE_TAG = "v$TIMESTAMP"
 $IMAGE_NAME = "$ACR_NAME.azurecr.io/event-generator:$IMAGE_TAG"
-$KAFKA_BOOTSTRAP_SERVERS = "4.246.237.185:9092"  # Primary Kafka LoadBalancer service IP and port
+# Single Kafka broker with external IP (LoadBalancer service)
+$KAFKA_BOOTSTRAP_SERVERS = "4.246.237.185:9092"
 
 # Build and push the Docker image with the new tag
 Write-Host "Building and pushing Docker image with tag $IMAGE_TAG..." -ForegroundColor Green

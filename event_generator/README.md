@@ -95,6 +95,12 @@ The event generator uses pre-downloaded data files:
    - Verify data files exist and are readable
    - Check memory usage
 
+3. **NotLeaderForPartitionError**
+   - This warning occasionally appears but does not affect overall functionality
+   - Most messages are successfully sent to Kafka
+   - The issue is related to Kafka broker leadership and will be investigated in the next phase
+   - Current workaround: The custom DNS resolver in generator.py maps broker-1 to its external IP (135.234.226.183)
+
 ### 2. Debug Mode
 
 Run the generator in debug mode for detailed logging:

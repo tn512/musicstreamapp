@@ -8,7 +8,7 @@ This guide explains how to deploy the event generator for the music streaming se
 - Docker installed locally
 - Access to an Azure Container Registry (ACR)
 - Access to an Azure Kubernetes Service (AKS) cluster
-- Kafka running in the AKS cluster
+- Kafka running in the AKS cluster with a single broker
 
 ## Option 1: Deploy to AKS (Preferred)
 
@@ -65,46 +65,35 @@ If AKS resources are constrained, you can deploy to Azure Container Instances (A
 
 Follow the same steps as in Option 1 to build and push the Docker image to ACR.
 
-### Step 2: Expose Kafka (if not already exposed)
+### Step 2: Ensure Kafka is Accessible
 
-For ACI to connect to Kafka in AKS, you need to expose Kafka externally:
+For ACI to connect to Kafka in AKS, make sure your Kafka broker is exposed via a LoadBalancer service. With our single-broker setup, the main Kafka service provides this access:
 
 ```bash
-kubectl apply -f - <<EOF
-apiVersion: v1
-kind: Service
-metadata:
-  name: kafka-external
-  namespace: kafka
-spec:
-  type: LoadBalancer
-  ports:
-  - port: 9092
-    targetPort: 9092
-  selector:
-    app: kafka
-    component: broker
-EOF
+# Check the external IP of the Kafka service
+kubectl get svc -n kafka
 ```
+
+You should see the external IP address for the main Kafka service (e.g., 4.246.237.185).
 
 ### Step 3: Deploy to ACI
 
-1. Navigate to the event_generator directory:
+1. Navigate to the event_generator deploy directory:
    ```bash
-   cd event_generator
+   cd event_generator/deploy
    ```
 
-2. Edit the `deploy_to_aci.sh` script to set your environment variables:
-   ```bash
-   ACR_NAME="your_acr_name"  # Replace with your actual ACR name
-   RESOURCE_GROUP="your_resource_group"  # Replace with your resource group
-   LOCATION="eastus"  # Replace with your preferred Azure region
+2. Run the Deploy-To-ACI.ps1 script:
+   ```powershell
+   ./Deploy-To-ACI.ps1
    ```
 
-3. Make the script executable and run it:
-   ```bash
-   chmod +x deploy_to_aci.sh
-   ./deploy_to_aci.sh
+   Or manually edit and run the script to set your environment variables:
+   ```powershell
+   $ACR_NAME="your_acr_name"  # Replace with your actual ACR name
+   $RESOURCE_GROUP="your_resource_group"  # Replace with your resource group
+   $LOCATION="eastus"  # Replace with your preferred Azure region
+   $KAFKA_BOOTSTRAP_SERVERS="4.246.237.185:9092"  # Replace with your Kafka external IP
    ```
 
 4. Verify the deployment:
@@ -143,10 +132,9 @@ az container show --resource-group your_resource_group --name event-generator --
    kubectl get pods -n kafka
    ```
 
-2. Check if the event generator can reach Kafka:
+2. Check if your Kafka service is properly exposed:
    ```bash
-   # For AKS deployment
-   kubectl exec -it $(kubectl get pod -l app=event-generator -o jsonpath='{.items[0].metadata.name}') -- ping kafka-broker-0.kafka-headless.kafka.svc.cluster.local
+   kubectl get svc -n kafka
    ```
 
 3. Check event generator logs for connection errors:
