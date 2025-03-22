@@ -13,7 +13,6 @@ This Python application generates simulated music streaming events and sends the
 - `data/`: Contains data files used by the generator
 - `deploy/`: Deployment-related files
   - `Dockerfile`: For building the event generator container
-  - `Build-And-Push.ps1`: PowerShell script for building and pushing Docker images
   - `Deploy-To-ACI.ps1`: PowerShell script for deploying to Azure Container Instances
   - `DEPLOYMENT.md`: Detailed deployment instructions
 
@@ -57,23 +56,63 @@ The generator sends events to the following Kafka topics:
 
 ## Deployment
 
-### 1. Build and Push Docker Image
+### Current Azure Container Instances Deployment
 
-Navigate to the deploy directory and run the Build-And-Push.ps1 script:
+The event generator is deployed to Azure Container Instances (ACI) using Docker and Azure Container Registry (ACR). The deployment process is automated using the `Deploy-To-ACI.ps1` PowerShell script.
+
+#### Prerequisites
+
+- Azure CLI installed and logged in
+- Docker Desktop running
+- Access to Azure Container Registry (`musicstreamappnewdevacr`)
+- Access to Azure Resource Group (`musicstreamapp-new-dev-rg`)
+
+#### Deployment Steps
+
+1. Navigate to the deploy directory:
 ```powershell
-cd deploy
-.\Build-And-Push.ps1
+cd event_generator/deploy
 ```
 
-### 2. Deploy to Azure Container Instances
-
-Navigate to the deploy directory and run the Deploy-To-ACI.ps1 script:
+2. Run the Deploy-To-ACI.ps1 script to build the Docker image, push it to ACR, and deploy to ACI:
 ```powershell
-cd deploy
 .\Deploy-To-ACI.ps1
 ```
 
-For detailed deployment instructions, see `deploy/DEPLOYMENT.md`.
+This script:
+- Builds the Docker image from the Dockerfile
+- Tags it with a timestamp for versioning
+- Logs in to the Azure Container Registry
+- Pushes the image to ACR
+- Creates a container instance in Azure Container Instances
+- Configures environment variables for Kafka connection
+
+#### Verifying Deployment
+
+Check the status of the container:
+```powershell
+az container show --resource-group musicstreamapp-new-dev-rg --name event-generator --query instanceView.state
+```
+
+View container logs:
+```powershell
+az container logs --resource-group musicstreamapp-new-dev-rg --name event-generator
+```
+
+#### Current Configuration
+
+- ACR Name: `musicstreamappnewdevacr`
+- Resource Group: `musicstreamapp-new-dev-rg`
+- Location: `eastus`
+- Container Name: `event-generator`
+- Kafka Bootstrap Servers: `172.171.33.73:9092`
+
+#### Troubleshooting Deployment
+
+If you encounter issues with ACR credentials, the deployment script now includes fallback mechanisms:
+- It will first try to retrieve credentials using standard methods
+- If that fails, it will attempt to use an access token instead
+- The script handles proper error reporting and recovery
 
 ## Data Sources
 
@@ -86,20 +125,19 @@ The event generator uses pre-downloaded data files:
 ### 1. Common Issues
 
 1. **Kafka Connection Issues**
-   - Verify Kafka is running: `kubectl get pods -n kafka`
-   - Check Kafka logs: `kubectl logs -n kafka kafka-broker-0`
-   - Verify network connectivity to the Kafka bootstrap servers
+   - Verify Kafka is running and accessible
+   - Check the Kafka bootstrap server IP and port (currently set to `172.171.33.73:9092`)
+   - Verify network connectivity from ACI to the Kafka bootstrap servers
 
 2. **Event Generation Issues**
-   - Check application logs: `az container logs --resource-group musicstreamapp-dev-rg --name event-generator`
+   - Check application logs: `az container logs --resource-group musicstreamapp-new-dev-rg --name event-generator`
    - Verify data files exist and are readable
-   - Check memory usage
+   - Check resource usage (CPU/memory) in the Azure portal
 
-3. **NotLeaderForPartitionError**
-   - This warning occasionally appears but does not affect overall functionality
-   - Most messages are successfully sent to Kafka
-   - The issue is related to Kafka broker leadership and will be investigated in the next phase
-   - Current workaround: The custom DNS resolver in generator.py maps broker-1 to its external IP (135.234.226.183)
+3. **Docker Build Issues**
+   - Ensure Docker Desktop is running
+   - Check Docker settings for appropriate resource allocation
+   - Verify connectivity to Azure Container Registry
 
 ### 2. Debug Mode
 
@@ -110,13 +148,12 @@ python generator.py --kafka-bootstrap-servers <kafka-bootstrap-servers> --debug
 
 ## Verifying Events in Kafka
 
-To check if events are being sent to Kafka:
-```bash
-kubectl exec -it kafka-broker-0 -n kafka -- kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic listen_events --from-beginning --max-messages 5
-```
+The event generator regularly logs successful message deliveries, showing which topics, partitions, and offsets messages are being sent to. You can verify these by checking the container logs.
 
 ## References
 
 - [Kafka Python Client Documentation](https://kafka-python.readthedocs.io/en/master/)
 - [Million Song Dataset](http://millionsongdataset.com/)
-- [Python Logging](https://docs.python.org/3/library/logging.html) 
+- [Python Logging](https://docs.python.org/3/library/logging.html)
+- [Azure Container Instances Documentation](https://docs.microsoft.com/en-us/azure/container-instances/)
+- [Azure Container Registry Documentation](https://docs.microsoft.com/en-us/azure/container-registry/) 

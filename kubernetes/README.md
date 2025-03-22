@@ -8,8 +8,7 @@ This directory contains Kubernetes manifests for deploying Kafka and Airflow on 
 kubernetes/
 ├── kafka/                # Kafka cluster deployment
 │   ├── values.yaml       # Helm chart values for Kafka
-│   ├── kafka-topics.md   # Documentation for Kafka topics
-│   └── kafka-external-service.yaml  # External service for broker 1
+│   └── kafka-topics.md   # Documentation for Kafka topics
 └── airflow/              # Airflow deployment
     ├── webserver/        # Airflow webserver
     ├── scheduler/        # Airflow scheduler
@@ -51,23 +50,72 @@ kubernetes/
    helm install kafka bitnami/kafka -f values.yaml -n kafka
    ```
 
-2. **Deploy Kafka External Service for Broker 1**
-   
-   To expose Kafka broker 1 to external clients (like the event generator running in ACI):
-   
-   ```bash
-   # Apply the external service configuration
-   kubectl apply -f kafka/kafka-external-service.yaml
-   ```
-   
-   This will:
-   - Create a LoadBalancer service specifically targeting Kafka broker 1
-   - Assign an external IP that can be used to connect to broker 1 from outside the cluster
+2. **Configure External Access - IMPORTANT**
 
-3. **Verify the External Service**
+   Before deploying Kafka, you need to update the `advertised.listeners` in the `values.yaml` file with the correct external IP address:
+
+   ```yaml
+   # Find this section in values.yaml
+   broker:
+     # ...other configurations...
+     extraConfig: |
+       # ...other configs...
+       # Update the external IP address in the advertised.listeners
+       advertised.listeners=INTERNAL://kafka-broker-0.kafka-broker-headless.kafka.svc.cluster.local:9093,EXTERNAL://YOUR_EXTERNAL_IP:9092
+   ```
+
+   To find your actual external IP:
    ```bash
-   # Check the external service and note the EXTERNAL-IP
-   kubectl get svc kafka-external -n kafka
+   # After deploying Kafka
+   kubectl get services -n kafka
+   # Look for the EXTERNAL-IP of the kafka service
+   ```
+
+   If the external IP is different from what's configured in values.yaml:
+   ```bash
+   # Update the values.yaml file with the correct IP
+   # Then upgrade the Kafka deployment
+   helm upgrade --install kafka bitnami/kafka -n kafka -f values.yaml
+   ```
+
+3. **Create Kafka Topics**
+
+   Once Kafka is properly deployed and the external IP is correctly configured, create the required topics:
+
+   ```bash
+   # Create the listen_events topic
+   kubectl exec -it kafka-broker-0 -n kafka -- kafka-topics.sh --create --topic listen_events --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
+
+   # Create the page_view_events topic
+   kubectl exec -it kafka-broker-0 -n kafka -- kafka-topics.sh --create --topic page_view_events --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
+
+   # Create the auth_events topic
+   kubectl exec -it kafka-broker-0 -n kafka -- kafka-topics.sh --create --topic auth_events --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
+
+   # Create the status_change_events topic
+   kubectl exec -it kafka-broker-0 -n kafka -- kafka-topics.sh --create --topic status_change_events --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
+   ```
+
+   Verify that all topics were created correctly:
+   ```bash
+   kubectl exec -it kafka-broker-0 -n kafka -- kafka-topics.sh --list --bootstrap-server localhost:9092
+   ```
+
+   Expected output:
+   ```
+   auth_events
+   listen_events
+   page_view_events
+   status_change_events
+   ```
+
+4. **Verify Kafka Service**
+   ```bash
+   # Check all services in the Kafka namespace
+   kubectl get svc -n kafka
+   
+   # Check all pods in the Kafka namespace
+   kubectl get pods -n kafka
    ```
 
 ### 2. Airflow Deployment
@@ -99,14 +147,11 @@ kubernetes/
    # Get into a Kafka broker pod
    kubectl exec -it kafka-broker-0 -n kafka -- bash
    
-   # Create a test topic
-   kafka-topics.sh --bootstrap-server localhost:9092 --create --topic test --replication-factor 2 --partitions 3
-   
    # List topics
    kafka-topics.sh --bootstrap-server localhost:9092 --list
    
    # Describe a topic to see partition assignments
-   kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic test
+   kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic listen_events
    ```
 
 3. **Test External Kafka Connection**
@@ -154,8 +199,9 @@ kubernetes/
 
 1. **Update Kafka Configuration**
    ```bash
-   kubectl apply -f kafka/kafka-configmap.yaml
-   kubectl rollout restart statefulset kafka -n kafka
+   # Edit the values.yaml file with your changes
+   # Then apply the changes using Helm
+   helm upgrade kafka bitnami/kafka -n kafka -f values.yaml
    ```
 
 2. **Update Airflow Configuration**
@@ -173,11 +219,11 @@ kubernetes/
 1. **Pod Not Starting**
    ```bash
    # Check pod logs
-   kubectl logs -n kafka kafka-0
+   kubectl logs -n kafka kafka-broker-0
    kubectl logs -n airflow airflow-webserver-0
    
    # Check pod events
-   kubectl describe pod -n kafka kafka-0
+   kubectl describe pod -n kafka kafka-broker-0
    kubectl describe pod -n airflow airflow-webserver-0
    ```
 
@@ -187,6 +233,19 @@ kubernetes/
    kubectl get pv
    kubectl get pvc -n kafka
    kubectl get pvc -n airflow
+   ```
+
+3. **Kafka Connection Issues**
+
+   If you're having trouble connecting to Kafka:
+   
+   ```bash
+   # Verify the external IP matches what's in your values.yaml
+   kubectl get svc kafka -n kafka
+   
+   # Update values.yaml with the correct external IP in advertised.listeners
+   # Then upgrade Kafka with:
+   helm upgrade --install kafka bitnami/kafka -n kafka -f values.yaml
    ```
 
 ### 2. Network Issues
@@ -201,24 +260,6 @@ kubernetes/
    ```bash
    kubectl get networkpolicies -n kafka
    kubectl get networkpolicies -n airflow
-   ```
-
-3. **Kafka External Service Issues**
-
-   If the external IP is not assigned:
-   
-   ```bash
-   # Check the service status
-   kubectl describe service kafka-external -n kafka
-   
-   # Verify your cloud provider supports LoadBalancer services
-   ```
-   
-   To delete and recreate the external service:
-   
-   ```bash
-   kubectl delete service kafka-external -n kafka
-   # Then run the create script again
    ```
 
 ## Monitoring
@@ -238,7 +279,7 @@ kubectl top nodes
 
 ```bash
 # Kafka logs
-kubectl logs -f -n kafka kafka-0
+kubectl logs -f -n kafka kafka-broker-0
 
 # Airflow logs
 kubectl logs -f -n airflow airflow-webserver-0
@@ -249,87 +290,4 @@ kubectl logs -f -n airflow airflow-webserver-0
 - [Kafka Documentation](https://kafka.apache.org/documentation/)
 - [Airflow Documentation](https://airflow.apache.org/docs/)
 - [Kubernetes Documentation](https://kubernetes.io/docs/home/)
-- [Helm Documentation](https://helm.sh/docs/)
-
-# Kubernetes Configuration
-
-This directory contains Kubernetes configuration files and scripts for the music streaming application.
-
-## Kafka External Service
-
-The Kafka external service exposes Kafka broker 1 to external clients, allowing them to connect to Kafka from outside the Kubernetes cluster.
-
-### Understanding the External Service
-
-The `kafka-external-service.yaml` file creates a LoadBalancer service that specifically targets Kafka broker 1:
-
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: kafka-external
-  namespace: kafka
-  labels:
-    app.kubernetes.io/name: kafka
-    app.kubernetes.io/component: broker
-    broker-id: "1"
-spec:
-  type: LoadBalancer
-  ports:
-  - port: 9092
-    targetPort: 9092
-    protocol: TCP
-  selector:
-    app.kubernetes.io/name: kafka
-    app.kubernetes.io/component: broker
-    statefulset.kubernetes.io/pod-name: kafka-broker-1
-```
-
-This service specifically targets the pod named `kafka-broker-1` using the `statefulset.kubernetes.io/pod-name` selector.
-
-### Connecting to Kafka from External Clients
-
-When connecting from external clients like the event generator:
-
-1. Use the primary bootstrap server (exposed by the main Kafka service) for initial connections:
-   ```
-   # Get the external IP of the main Kafka service
-   kubectl get svc kafka -n kafka
-   ```
-
-2. For connections to specific brokers, use the appropriate external IP:
-   - Broker 0: Use the main Kafka service external IP
-   - Broker 1: Use the kafka-external service external IP
-   ```
-   # Get the external IP for broker 1
-   kubectl get svc kafka-external -n kafka
-   ```
-
-3. In the event generator, we use a custom DNS resolver to map broker hostnames to their respective external IPs.
-
-### Troubleshooting
-
-If you encounter connection issues:
-
-1. Verify both services have external IPs assigned:
-   ```bash
-   kubectl get svc -n kafka
-   ```
-
-2. Check if the event generator logs show any connection errors:
-   ```bash
-   az container logs --resource-group musicstreamapp-dev-rg --name event-generator
-   ```
-
-3. Verify the topic partitions and their leader assignments:
-   ```bash
-   kubectl exec -it kafka-broker-0 -n kafka -- kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic page_view_events
-   ```
-
-### Cleanup
-
-To delete the external service:
-
-```bash
-kubectl delete -f kafka/kafka-external-service.yaml
-``` 
+- [Helm Documentation](https://helm.sh/docs/) 

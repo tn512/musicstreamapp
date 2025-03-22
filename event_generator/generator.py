@@ -300,7 +300,7 @@ class MusicEventGenerator:
             user_id, session_id, item_in_session,
             "Login", auth_success
         )
-        self.send_event('auth_events_new', auth_event)
+        self.send_event('auth_events', auth_event)
         item_in_session += 1
         
         if not auth_success:
@@ -314,7 +314,7 @@ class MusicEventGenerator:
                 user_id, session_id, current_page, 
                 item_in_session, auth_status
             )
-            self.send_event('page_view_events_new', page_event)
+            self.send_event('page_view_events', page_event)
             item_in_session += 1
             
             # Handle special pages
@@ -325,7 +325,7 @@ class MusicEventGenerator:
                         user_id, session_id, item_in_session,
                         prev_level=current_level
                     )
-                    self.send_event('status_change_events_new', status_event)
+                    self.send_event('status_change_events', status_event)
                     item_in_session += 1
                     
                     # Update level if it was a subscription change
@@ -336,7 +336,7 @@ class MusicEventGenerator:
                 listen_event = self.generate_listen_event(
                     user_id, session_id, item_in_session
                 )
-                self.send_event('listen_events_new', listen_event)
+                self.send_event('listen_events', listen_event)
                 item_in_session += 1
                 
                 # Simulate listening duration
@@ -348,7 +348,7 @@ class MusicEventGenerator:
                     user_id, session_id, item_in_session,
                     "Logout", True
                 )
-                self.send_event('auth_events_new', auth_event)
+                self.send_event('auth_events', auth_event)
                 break
             
             # Get next page
@@ -441,7 +441,7 @@ def main():
                 try:
                     logger.info("Testing Kafka producer with a test message...")
                     test_event = {"message": "Test event", "timestamp": int(time.time() * 1000)}
-                    future = generator.producer.send("test_events_new", test_event)
+                    future = generator.producer.send("test_events", test_event)
                     record_metadata = future.get(timeout=10)
                     logger.info(f"Test message sent successfully. Topic={record_metadata.topic}, Partition={record_metadata.partition}")
                     break  # Successfully connected to Kafka

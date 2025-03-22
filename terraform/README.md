@@ -28,7 +28,7 @@ terraform/
 
 The infrastructure creates the following resource groups:
 
-1. `musicstream-tfstate-rg`
+1. `musicstream-tfstate-rg-new`
    - Purpose: Stores Terraform state files
    - Location: eastus
    - Resources:
@@ -67,6 +67,9 @@ The infrastructure creates the following resource groups:
    # Install Terraform
    # Login to Azure
    az login
+   
+   # Set your active subscription (replace with your subscription ID)
+   az account set --subscription "YOUR_SUBSCRIPTION_ID"
    ```
 
 2. **Bootstrap Setup**
@@ -81,6 +84,36 @@ The infrastructure creates the following resource groups:
    ```bash
    cd ../main
    terraform init
+   terraform plan
+   terraform apply
+   ```
+
+## Switching Azure Accounts
+
+If you need to move your infrastructure to a different Azure account:
+
+1. **Update Backend Configuration**
+   - Update the Terraform backend.tf files in bootstrap/ and main/ directories
+   - Example:
+     ```hcl
+     # In main/backend.tf
+     terraform {
+       backend "azurerm" {
+         resource_group_name  = "musicstream-tfstate-rg-new"
+         storage_account_name = "musicstreamtfstatenew"
+         container_name      = "tfstate"
+         key                 = "terraform.tfstate"
+       }
+     }
+     ```
+
+2. **Reinitialize Terraform**
+   ```bash
+   terraform init -reconfigure
+   ```
+
+3. **Apply Configuration**
+   ```bash
    terraform plan
    terraform apply
    ```
@@ -144,11 +177,18 @@ The infrastructure creates the following resource groups:
    - Resource naming conflicts
    - Network connectivity issues
    - Permission problems
+   - Authentication failures
 
 2. **Solutions**
    - Check resource naming conventions
    - Verify network configurations
    - Review RBAC assignments
+   - Ensure proper authentication with `az login` and `az account set`
+   - Set environment variables if needed:
+     ```powershell
+     $env:ARM_SUBSCRIPTION_ID="YOUR_SUBSCRIPTION_ID"
+     $env:ARM_TENANT_ID="YOUR_TENANT_ID"
+     ```
 
 ## Best Practices
 

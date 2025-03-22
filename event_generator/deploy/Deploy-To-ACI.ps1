@@ -1,13 +1,13 @@
 # Configuration
-$ACR_NAME = "musicstreamappdevacr"
-$RESOURCE_GROUP = "musicstreamapp-dev-rg"
+$ACR_NAME = "musicstreamappnewdevacr"
+$RESOURCE_GROUP = "musicstreamapp-new-dev-rg"
 $LOCATION = "eastus"
 $CONTAINER_NAME = "event-generator"
 $TIMESTAMP = Get-Date -Format "yyyyMMddHHmmss"
 $IMAGE_TAG = "v$TIMESTAMP"
 $IMAGE_NAME = "$ACR_NAME.azurecr.io/event-generator:$IMAGE_TAG"
 # Single Kafka broker with external IP (LoadBalancer service)
-$KAFKA_BOOTSTRAP_SERVERS = "4.246.237.185:9092"
+$KAFKA_BOOTSTRAP_SERVERS = "172.171.33.73:9092"
 
 # Build and push the Docker image with the new tag
 Write-Host "Building and pushing Docker image with tag $IMAGE_TAG..." -ForegroundColor Green
@@ -15,10 +15,34 @@ docker build -t $IMAGE_NAME -f Dockerfile ..
 az acr login --name $ACR_NAME
 docker push $IMAGE_NAME
 
+# Ensure we're logged in to Azure
+Write-Host "Ensuring Azure CLI login..." -ForegroundColor Green
+az account show | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Not logged in to Azure. Please login..." -ForegroundColor Yellow
+    az login
+}
+
 # Get ACR credentials
 Write-Host "Getting ACR credentials..." -ForegroundColor Green
-$ACR_USERNAME = az acr credential show --name $ACR_NAME --query "username" -o tsv
-$ACR_PASSWORD = az acr credential show --name $ACR_NAME --query "passwords[0].value" -o tsv
+try {
+    $ACR_USERNAME = az acr credential show --name $ACR_NAME --query "username" -o tsv
+    $ACR_PASSWORD = az acr credential show --name $ACR_NAME --query "passwords[0].value" -o tsv
+    
+    if ([string]::IsNullOrEmpty($ACR_USERNAME) -or [string]::IsNullOrEmpty($ACR_PASSWORD)) {
+        throw "Failed to retrieve valid ACR credentials"
+    }
+    
+    Write-Host "Successfully retrieved ACR credentials" -ForegroundColor Green
+}
+catch {
+    Write-Host "Error retrieving ACR credentials: $_" -ForegroundColor Red
+    Write-Host "Attempting to use access token instead..." -ForegroundColor Yellow
+    
+    $TOKEN = az acr login --name $ACR_NAME --expose-token --query "accessToken" -o tsv
+    $ACR_USERNAME = "00000000-0000-0000-0000-000000000000"
+    $ACR_PASSWORD = $TOKEN
+}
 
 # Delete existing container instance if it exists
 Write-Host "Checking if container instance exists..." -ForegroundColor Green

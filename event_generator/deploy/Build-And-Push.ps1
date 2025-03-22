@@ -1,5 +1,5 @@
 # Configuration
-$ACR_NAME = "musicstreamappdevacr"
+$ACR_NAME = "musicstreamappnewdevacr"
 $IMAGE_NAME = "event-generator"
 $TAG = "latest"
 
