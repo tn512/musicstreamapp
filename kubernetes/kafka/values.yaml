@@ -50,7 +50,7 @@ broker:
     listener.security.protocol.map=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
     inter.broker.listener.name=INTERNAL
     # Simplified advertised listeners for single broker
-    advertised.listeners=INTERNAL://kafka-broker-0.kafka-broker-headless.kafka.svc.cluster.local:9093,EXTERNAL://172.171.33.73:9092
+    advertised.listeners=INTERNAL://kafka-broker-0.kafka-broker-headless.kafka.svc.cluster.local:9093,EXTERNAL://172.212.37.12:9092
 
 auth:
   clientProtocol: plaintext
