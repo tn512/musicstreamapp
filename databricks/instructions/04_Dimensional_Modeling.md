@@ -286,91 +286,137 @@ def create_silver_layer_dimensions_streaming():
         .trigger(availableNow=True)
         .start())
     
-    # Dimension: Songs - streaming update
-    songs_stream = (spark.readStream.table("music_streaming.bronze.listen_events")
-        .select("song", "artist", "duration", "timestamp")
-        .filter(F.col("song").isNotNull() & F.col("artist").isNotNull())
-        .withColumnRenamed("song", "title")
-        .withColumnRenamed("artist", "artistName")
-        .withColumn("duration", F.col("duration").cast("double"))
-        .withColumn("songKey", md5_hash("title", "artistName"))
-        .dropDuplicates(["title", "artistName"])  # Simple deduplication for streaming
+    # Dimension: Songs - batch load from songs.csv
+    songs_table = (spark.read.csv("songs.csv", header=True)
+        .select(
+            F.col("song_id").alias("songId"),
+            F.col("title"),
+            F.col("artist_name").alias("artistName"),
+            F.col("duration"),
+            F.col("key"),
+            F.col("key_confidence").alias("keyConfidence"),
+            F.col("loudness"),
+            F.col("song_hotttnesss").alias("songHotness"),
+            F.col("tempo"),
+            F.col("year"),
+            # Create songKey as a surrogate key for joining
+            F.md5(F.concat_ws("|", "song_id")).alias("songKey")
+        )
+        .where(F.col("title").isNotNull() & F.col("artist_name").isNotNull())
     )
     
-    # Write dim_songs to Silver layer with streaming
-    songs_query = (songs_stream.writeStream
+    # Write dim_songs to Silver layer
+    (songs_table.write
         .format("delta")
-        .outputMode("append")
-        .option("checkpointLocation", "/tmp/delta/_checkpoints/silver_dim_songs")
-        .option("mergeSchema", "true")
-        .trigger(availableNow=True)
-        .toTable("music_streaming.silver.dim_songs"))
+        .mode("overwrite")
+        .saveAsTable("music_streaming.silver.dim_songs"))
     
-    # Dimension: Artists - streaming update
-    artists_stream = (spark.readStream.table("music_streaming.bronze.listen_events")
-        .select("artist", "timestamp")
-        .filter(F.col("artist").isNotNull())
-        .withColumnRenamed("artist", "name")
-        .withColumn("artistKey", md5_hash("name"))
-        .dropDuplicates(["name"])  # Simple deduplication for streaming
+    # Dimension: Artists - batch load from songs.csv
+    artists_table = (spark.read.csv("songs.csv", header=True)
+        .select(
+            F.col("artist_id").alias("artistId"),
+            F.col("artist_latitude").alias("latitude"),
+            F.col("artist_longitude").alias("longitude"),
+            F.col("artist_location").alias("location"),
+            F.regexp_replace(F.regexp_replace(F.col("artist_name"), '"', ''), '\\\\\\\\', '').alias("name")
+        )
+        .where(F.col("artist_name").isNotNull())
+        .groupBy("name")  # Group by artist name to remove duplicates
+        .agg(
+            F.max("artistId").alias("artistId"),
+            F.max("latitude").alias("latitude"),
+            F.max("longitude").alias("longitude"),
+            F.max("location").alias("location")
+        )
+        .withColumn("artistKey", F.md5(F.col("artistId")))
     )
     
-    # Write dim_artists to Silver layer with streaming
-    artists_query = (artists_stream.writeStream
+    # Write dim_artists to Silver layer
+    (artists_table.write
         .format("delta")
-        .outputMode("append")
-        .option("checkpointLocation", "/tmp/delta/_checkpoints/silver_dim_artists")
-        .option("mergeSchema", "true")
-        .trigger(availableNow=True)
-        .toTable("music_streaming.silver.dim_artists"))
+        .mode("overwrite")
+        .saveAsTable("music_streaming.silver.dim_artists"))
     
-    # Dimension: Location - streaming update
+    # Dimension: DateTime - generate complete date series
+    datetime_table = spark.sql("""
+        WITH date_series AS (
+            SELECT explode(sequence(
+                to_timestamp('2018-10-01 00:00:00'), 
+                to_timestamp('2025-03-31 23:59:59'), 
+                interval 1 hour
+            )) as date
+        )
+        SELECT
+            unix_timestamp(date) as dateKey,
+            date,
+            dayofweek(date) as dayOfWeek,
+            dayofmonth(date) as dayOfMonth,
+            weekofyear(date) as weekOfYear,
+            month(date) as month,
+            year(date) as year,
+            CASE WHEN dayofweek(date) IN (6,7) THEN True ELSE False END as weekendFlag
+        FROM date_series
+        ORDER BY date
+    """)
+    
+    # Write dim_datetime to Silver layer
+    (datetime_table.write
+        .format("delta")
+        .mode("overwrite")
+        .saveAsTable("music_streaming.silver.dim_datetime"))
+    
+    # Dimension: Location - stream-static join with state codes
+    # First load state codes reference data into a Delta table
+    state_codes = (spark.read.csv("state_codes.csv", header=True)
+        .select(
+            F.col("stateCode"),
+            F.col("stateName")
+        ))
+    
+    # Save state_codes as a Delta table for stream-static join
+    (state_codes.write
+        .format("delta")
+        .mode("overwrite")
+        .saveAsTable("music_streaming.silver.state_codes"))
+    
+    # Process locations from listen events with state name lookup using stream-static join
     location_stream = (spark.readStream.table("music_streaming.bronze.listen_events")
-        .select("city", "state", "zip", "latitude", "longitude", "timestamp")
+        .select(
+            "city",
+            F.col("state").alias("stateCode"),
+            "zip",
+            F.col("latitude").cast("double"),
+            F.col("longitude").cast("double")
+        )
         .filter(F.col("city").isNotNull() & F.col("state").isNotNull())
-        .withColumnRenamed("state", "stateCode")
-        .withColumn("locationKey", md5_hash("city", "stateCode", F.coalesce(F.col("zip"), F.lit("unknown"))))
-        .dropDuplicates(["city", "stateCode", "zip", "latitude", "longitude"])  # Simple deduplication for streaming
+        .dropDuplicates(["city", "stateCode", "zip", "latitude", "longitude"])
+        # Join with state codes using stream-static join
+        .join(
+            spark.table("music_streaming.silver.state_codes"),
+            "stateCode",
+            "left"
+        )
+        .withColumn("stateCode", F.coalesce(F.col("stateCode"), F.lit("NA")))
+        .withColumn("stateName", F.coalesce(F.col("stateName"), F.lit("NA")))
+        .withColumn("locationKey", F.md5(F.concat_ws("|", 
+            F.col("city"), 
+            F.col("stateCode"), 
+            F.coalesce(F.col("zip"), F.lit("unknown"))
+        )))
     )
     
-    # Write dim_location to Silver layer with streaming
+    # Write dim_location to Silver layer using streaming
     location_query = (location_stream.writeStream
         .format("delta")
         .outputMode("append")
         .option("checkpointLocation", "/tmp/delta/_checkpoints/silver_dim_location")
-        .option("mergeSchema", "true")
         .trigger(availableNow=True)
         .toTable("music_streaming.silver.dim_location"))
-    
-    # Dimension: DateTime - streaming update
-    datetime_stream = (spark.readStream.table("music_streaming.bronze.listen_events")
-        .select(F.date_trunc("hour", F.col("timestamp")).alias("date_hour"))
-        .withColumn("hour", F.hour("date_hour"))
-        .withColumn("dayOfMonth", F.dayofmonth("date_hour"))
-        .withColumn("month", F.month("date_hour"))
-        .withColumn("year", F.year("date_hour"))
-        .withColumn("dayOfWeek", F.dayofweek("date_hour"))
-        .withColumn("dateKey", F.md5(F.col("date_hour").cast("string")))
-        .withColumnRenamed("date_hour", "date")
-        .dropDuplicates(["date"])  # Simple deduplication for streaming
-    )
-    
-    # Write dim_datetime to Silver layer with streaming
-    datetime_query = (datetime_stream.writeStream
-        .format("delta")
-        .outputMode("append")
-        .option("checkpointLocation", "/tmp/delta/_checkpoints/silver_dim_datetime")
-        .option("mergeSchema", "true")
-        .trigger(availableNow=True)
-        .toTable("music_streaming.silver.dim_datetime"))
     
     # Return the streaming queries so they can be managed
     return {
         "users_query": users_query,
-        "songs_query": songs_query,
-        "artists_query": artists_query,
-        "location_query": location_query,
-        "datetime_query": datetime_query
+        "location_query": location_query
     }
 
 # Execute the function to start streaming
@@ -384,145 +430,108 @@ Create the fact table and denormalized view in the Gold layer with streaming:
 ```python
 # Function to create Gold layer tables with streaming
 def create_gold_layer_streaming():
-    # We'll need to join with pre-loaded dimension tables
-    # For streaming joins with static tables, we can load the dimensions first
-    
-    # Create the fact_streams table (fact table) with streaming
-    listen_events_stream = (spark.readStream.table("music_streaming.bronze.listen_events")
+    # Create the fact_streams table using stream-static joins
+    fact_stream = (spark.readStream.table("music_streaming.bronze.listen_events")
         .select(
-            "userId",
-            "artist",
-            "song",
-            "timestamp",
-            "city",
-            "state",
-            "latitude",
-            "longitude"
+            F.col("userId"),
+            F.regexp_replace(F.regexp_replace(F.col("artist"), '"', ''), '\\\\\\\\', '').alias("artist_clean"),
+            F.col("song"),
+            F.from_unixtime(F.col("ts")/1000).alias("ts"),
+            F.col("city"),
+            F.col("state"),
+            F.col("lat").alias("latitude"),
+            F.col("lon").alias("longitude")
         )
-        .filter(
-            F.col("userId").isNotNull() & 
-            F.col("artist").isNotNull() & 
-            F.col("song").isNotNull()
+        .filter(F.col("userId").isNotNull())
+        # Join with dim_users (SCD Type 2)
+        .join(
+            spark.table("music_streaming.silver.dim_users"),
+            (F.col("userId") == F.col("dim_users.userId")) &
+            (F.to_date(F.col("ts")) >= F.col("row_activation_date")) &
+            (F.to_date(F.col("ts")) < F.col("row_expiration_date")),
+            "left"
         )
-        .withColumn("date_part", F.to_date("timestamp"))
+        # Join with dim_artists
+        .join(
+            spark.table("music_streaming.silver.dim_artists"),
+            F.col("artist_clean") == F.col("dim_artists.name"),
+            "left"
+        )
+        # Join with dim_songs
+        .join(
+            spark.table("music_streaming.silver.dim_songs"),
+            (F.col("artist_clean") == F.col("dim_songs.artistName")) &
+            (F.col("song") == F.col("dim_songs.title")),
+            "left"
+        )
+        # Join with dim_location
+        .join(
+            spark.table("music_streaming.silver.dim_location"),
+            (F.col("city") == F.col("dim_location.city")) &
+            (F.col("state") == F.col("dim_location.stateCode")) &
+            (F.col("latitude") == F.col("dim_location.latitude")) &
+            (F.col("longitude") == F.col("dim_location.longitude")),
+            "left"
+        )
+        # Join with dim_datetime
+        .join(
+            spark.table("music_streaming.silver.dim_datetime"),
+            F.date_trunc("hour", F.col("ts")) == F.col("dim_datetime.date"),
+            "left"
+        )
+        .select(
+            F.col("dim_users.userKey").alias("userKey"),
+            F.col("dim_artists.artistKey").alias("artistKey"),
+            F.col("dim_songs.songKey").alias("songKey"),
+            F.col("dim_datetime.dateKey").alias("dateKey"),
+            F.col("dim_location.locationKey").alias("locationKey"),
+            F.col("ts"),
+            F.to_date(F.col("ts")).alias("date_part")
+        )
     )
     
-    # Define a foreachBatch function to handle the joining with dimension tables
-    def process_fact_batch(batch_df, batch_id):
-        # If the batch is empty, skip processing
-        if batch_df.isEmpty():
-            return
-            
-        # Load dimension tables from Silver layer
-        dim_users = spark.table("music_streaming.silver.dim_users")
-        dim_artists = spark.table("music_streaming.silver.dim_artists") 
-        dim_songs = spark.table("music_streaming.silver.dim_songs")
-        dim_location = spark.table("music_streaming.silver.dim_location")
-        dim_datetime = spark.table("music_streaming.silver.dim_datetime")
-        
-        # Join with dimension tables
-        fact_batch = (batch_df
-            .join(dim_users, batch_df["userId"] == dim_users["userId"], "left")
-            .join(dim_artists, batch_df["artist"] == dim_artists["name"], "left")
-            .join(
-                dim_songs, 
-                (batch_df["song"] == dim_songs["title"]) & 
-                (batch_df["artist"] == dim_songs["artistName"]), 
-                "left"
-            )
-            .join(
-                dim_location, 
-                (batch_df["city"] == dim_location["city"]) & 
-                (batch_df["state"] == dim_location["stateCode"]) & 
-                (batch_df["latitude"] == dim_location["latitude"]) & 
-                (batch_df["longitude"] == dim_location["longitude"]), 
-                "left"
-            )
-            .join(
-                dim_datetime, 
-                F.date_trunc("hour", batch_df["timestamp"]) == dim_datetime["date"], 
-                "left"
-            )
-            .select(
-                dim_users["userKey"].alias("userKey"),
-                dim_artists["artistKey"].alias("artistKey"),
-                dim_songs["songKey"].alias("songKey"),
-                dim_datetime["dateKey"].alias("dateKey"),
-                dim_location["locationKey"].alias("locationKey"),
-                batch_df["timestamp"].alias("ts"),
-                batch_df["date_part"]
-            )
-        )
-        
-        # Write fact_batch to Gold layer
-        (fact_batch.write
-            .format("delta")
-            .mode("append")
-            .option("mergeSchema", "true")
-            .partitionBy("date_part")
-            .saveAsTable("music_streaming.gold.fact_streams"))
-            
-        # Now, create/update the wide_streams view
-        update_wide_streams()
-
-    # Function to update the wide_streams table
-    def update_wide_streams():
-        # Get the fact table
-        fact_streams = spark.table("music_streaming.gold.fact_streams")
-        
-        # Get dimension tables
-        dim_users = spark.table("music_streaming.silver.dim_users")
-        dim_artists = spark.table("music_streaming.silver.dim_artists") 
-        dim_songs = spark.table("music_streaming.silver.dim_songs")
-        dim_location = spark.table("music_streaming.silver.dim_location")
-        dim_datetime = spark.table("music_streaming.silver.dim_datetime")
-        
-        # Create wide_streams (denormalized view for analytics)
-        wide_streams = (fact_streams.alias("f")
-            .join(dim_users.alias("u"), F.col("f.userKey") == F.col("u.userKey"), "inner")
-            .join(dim_songs.alias("s"), F.col("f.songKey") == F.col("s.songKey"), "inner")
-            .join(dim_location.alias("l"), F.col("f.locationKey") == F.col("l.locationKey"), "inner")
-            .join(dim_datetime.alias("d"), F.col("f.dateKey") == F.col("d.dateKey"), "inner")
-            .join(dim_artists.alias("a"), F.col("f.artistKey") == F.col("a.artistKey"), "inner")
-            .select(
-                F.col("f.userKey"),
-                F.col("f.artistKey"),
-                F.col("f.songKey"),
-                F.col("f.dateKey"),
-                F.col("f.locationKey"),
-                F.col("f.ts").alias("timestamp"),
-                F.col("u.firstName"),
-                F.col("u.lastName"),
-                F.col("u.gender"),
-                F.col("u.level"),
-                F.col("u.userId"),
-                F.col("s.duration").alias("songDuration"),
-                F.col("s.title").alias("songName"),
-                F.col("l.city"),
-                F.col("l.stateCode").alias("state"),
-                F.col("l.latitude"),
-                F.col("l.longitude"),
-                F.col("d.date").alias("dateHour"),
-                F.col("d.dayOfMonth"),
-                F.col("d.dayOfWeek"),
-                F.col("a.name").alias("artistName")
-            )
-        )
-        
-        # Write wide_streams to Gold layer - this is a full refresh based on current fact table
-        (wide_streams.write
-            .format("delta")
-            .mode("overwrite")
-            .saveAsTable("music_streaming.gold.wide_streams"))
-    
-    # Start the streaming query with foreachBatch to handle the complex joins
-    fact_query = (listen_events_stream.writeStream
-        .foreachBatch(process_fact_batch)
+    # Write fact_streams to Gold layer
+    fact_query = (fact_stream.writeStream
+        .format("delta")
+        .outputMode("append")
         .option("checkpointLocation", "/tmp/delta/_checkpoints/gold_fact_streams")
-        .trigger(availableNow=True)  # Process available data once and stop
-        .start())
+        .partitionBy("date_part")
+        .trigger(availableNow=True)
+        .toTable("music_streaming.gold.fact_streams"))
     
-    # Return the streaming query so it can be managed
+    # Create wide_fact as a Unity Catalog View
+    spark.sql("""
+        CREATE OR REPLACE VIEW music_streaming.gold.wide_fact AS
+        SELECT
+            f.userKey,
+            f.artistKey,
+            f.songKey,
+            f.dateKey,
+            f.locationKey,
+            f.ts as timestamp,
+            u.firstName,
+            u.lastName,
+            u.gender,
+            u.level,
+            u.userId,
+            s.duration as songDuration,
+            s.title as songName,
+            l.city,
+            l.stateCode as state,
+            l.latitude,
+            l.longitude,
+            d.date as dateHour,
+            d.dayOfMonth,
+            d.dayOfWeek,
+            a.name as artistName
+        FROM music_streaming.gold.fact_streams f
+        INNER JOIN music_streaming.silver.dim_users u ON f.userKey = u.userKey
+        INNER JOIN music_streaming.silver.dim_songs s ON f.songKey = s.songKey
+        INNER JOIN music_streaming.silver.dim_location l ON f.locationKey = l.locationKey
+        INNER JOIN music_streaming.silver.dim_datetime d ON f.dateKey = d.dateKey
+        INNER JOIN music_streaming.silver.dim_artists a ON f.artistKey = a.artistKey
+    """)
+    
     return {
         "fact_query": fact_query
     }
