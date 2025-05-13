@@ -1,0 +1,192 @@
+version: 2
+
+models:
+  - name: bronze_listen_events
+    description: Cleaned and validated listen events from Kafka
+    columns:
+      - name: bronze_id
+        description: Unique identifier for this record
+        tests:
+          - unique
+          - not_null
+      - name: userId
+        description: User ID associated with the event
+        tests:
+          - not_null
+      - name: timestamp
+        description: Timestamp of the event
+        tests:
+          - not_null
+      - name: sessionId
+        description: Session ID for the user's current session
+      - name: artist
+        description: Artist name
+      - name: song
+        description: Song title
+      - name: duration
+        description: Song duration in milliseconds
+      - name: firstName
+        description: User's first name
+      - name: lastName
+        description: User's last name
+      - name: gender
+        description: User's gender
+      - name: level
+        description: User's subscription level (free/paid)
+      - name: city
+        description: User's city location
+      - name: state
+        description: User's state location (2-letter code)
+      - name: zip
+        description: User's ZIP code
+      - name: latitude
+        description: Geographic latitude
+      - name: longitude
+        description: Geographic longitude
+      - name: registration_time
+        description: User's registration timestamp
+      - name: ingestion_date
+        description: Date the record was ingested
+
+  - name: bronze_page_view_events
+    description: Cleaned and validated page view events from Kafka
+    columns:
+      - name: bronze_id
+        description: Unique identifier for this record
+        tests:
+          - unique
+          - not_null
+      - name: userId
+        description: User ID associated with the event
+        tests:
+          - not_null
+      - name: timestamp
+        description: Timestamp of the event
+        tests:
+          - not_null
+      - name: sessionId
+        description: Session ID for the user's current session
+      - name: page
+        description: Page that was viewed
+      - name: method
+        description: HTTP method used
+      - name: status
+        description: HTTP status code
+      - name: firstName
+        description: User's first name
+      - name: lastName
+        description: User's last name
+      - name: gender
+        description: User's gender
+      - name: level
+        description: User's subscription level (free/paid)
+      - name: city
+        description: User's city location
+      - name: state
+        description: User's state location (2-letter code)
+      - name: zip
+        description: User's ZIP code
+      - name: latitude
+        description: Geographic latitude
+      - name: longitude
+        description: Geographic longitude
+      - name: registration_time
+        description: User's registration timestamp
+      - name: ingestion_date
+        description: Date the record was ingested
+
+  - name: bronze_auth_events
+    description: Cleaned and validated authentication events from Kafka
+    columns:
+      - name: bronze_id
+        description: Unique identifier for this record
+        tests:
+          - unique
+          - not_null
+      - name: userId
+        description: User ID associated with the event
+        tests:
+          - not_null
+      - name: timestamp
+        description: Timestamp of the event
+        tests:
+          - not_null
+      - name: sessionId
+        description: Session ID for the user's current session
+      - name: success
+        description: Whether the authentication was successful
+      - name: method
+        description: Authentication method used
+      - name: status
+        description: HTTP status code
+      - name: firstName
+        description: User's first name
+      - name: lastName
+        description: User's last name
+      - name: gender
+        description: User's gender
+      - name: level
+        description: User's subscription level (free/paid)
+      - name: city
+        description: User's city location
+      - name: state
+        description: User's state location (2-letter code)
+      - name: zip
+        description: User's ZIP code
+      - name: latitude
+        description: Geographic latitude
+      - name: longitude
+        description: Geographic longitude
+      - name: registration_time
+        description: User's registration timestamp
+      - name: ingestion_date
+        description: Date the record was ingested
+        
+  - name: bronze_status_change_events
+    description: Cleaned and validated status change events from Kafka
+    columns:
+      - name: bronze_id
+        description: Unique identifier for this record
+        tests:
+          - unique
+          - not_null
+      - name: userId
+        description: User ID associated with the event
+        tests:
+          - not_null
+      - name: timestamp
+        description: Timestamp of the event
+        tests:
+          - not_null
+      - name: sessionId
+        description: Session ID for the user's current session
+      - name: prevLevel
+        description: User's previous subscription level
+      - name: level
+        description: User's new subscription level
+      - name: method
+        description: HTTP method used
+      - name: status
+        description: HTTP status code
+      - name: statusChangeType
+        description: Type of status change
+      - name: firstName
+        description: User's first name
+      - name: lastName
+        description: User's last name
+      - name: gender
+        description: User's gender
+      - name: city
+        description: User's city location
+      - name: state
+        description: User's state location (2-letter code)
+      - name: zip
+        description: User's ZIP code
+      - name: latitude
+        description: Geographic latitude
+      - name: longitude
+        description: Geographic longitude
+      - name: registration_time
+        description: User's registration timestamp
+      - name: ingestion_date
+        description: Date the record was ingested 

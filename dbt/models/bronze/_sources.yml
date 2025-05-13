@@ -1,0 +1,38 @@
+version: 2
+
+sources:
+  - name: music_streaming
+    database: "{{ var('catalog_name', 'music_streaming') }}" 
+    schema: "{{ var('raw_schema', 'raw') }}"
+    tables:
+      - name: listen_events
+        description: Raw listen events from Kafka
+        loaded_at_field: ingestion_timestamp
+        freshness:
+          warn_after: {count: 24, period: hour}
+          error_after: {count: 48, period: hour}
+        
+      - name: page_view_events
+        description: Raw page view events from Kafka  
+        loaded_at_field: ingestion_timestamp
+        freshness:
+          warn_after: {count: 24, period: hour}
+          error_after: {count: 48, period: hour}
+        
+      - name: auth_events
+        description: Raw authentication events from Kafka
+        loaded_at_field: ingestion_timestamp
+        freshness:
+          warn_after: {count: 24, period: hour}
+          error_after: {count: 48, period: hour}
+        
+      - name: status_change_events
+        description: Raw status change events from Kafka
+        loaded_at_field: ingestion_timestamp
+        freshness:
+          warn_after: {count: 24, period: hour}
+          error_after: {count: 48, period: hour}
+      
+      - name: songs
+        description: Static song metadata
+        loaded_at_field: null 
