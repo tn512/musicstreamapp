@@ -92,30 +92,81 @@ The infrastructure creates the following resource groups:
 
 If you need to move your infrastructure to a different Azure account:
 
-1. **Update Backend Configuration**
-   - Update the Terraform backend.tf files in bootstrap/ and main/ directories
-   - Example:
-     ```hcl
-     # In main/backend.tf
-     terraform {
-       backend "azurerm" {
-         resource_group_name  = "musicstream-tfstate-rg-new"
-         storage_account_name = "musicstreamtfstatenew"
-         container_name      = "tfstate"
-         key                 = "terraform.tfstate"
-       }
-     }
-     ```
-
-2. **Reinitialize Terraform**
-   ```bash
-   terraform init -reconfigure
+1. **Update Project Name in terraform.tfvars**
+   ```hcl
+   # In main/terraform.tfvars
+   project = "musicstreamapp-final"  # Update this with your new project name
+   environment = "dev"               # Keep or change based on your needs
    ```
 
-3. **Apply Configuration**
+2. **Update Bootstrap Configuration**
+   ```hcl
+   # In bootstrap/main.tf
+   resource "azurerm_resource_group" "tfstate" {
+     name     = "musicstream-tfstate-rg-final"      # Update with new name
+     location = "eastus"
+   }
+
+   resource "azurerm_storage_account" "tfstate" {
+     name                     = "musicstreamtfstatefinal"  # Update with new name
+     resource_group_name      = azurerm_resource_group.tfstate.name
+     # ... rest of configuration
+   }
+   ```
+
+3. **Update Backend Configuration**
+   ```hcl
+   # In main/backend.tf
+   terraform {
+     backend "azurerm" {
+       resource_group_name  = "musicstream-tfstate-rg-final"     # Match bootstrap RG name
+       storage_account_name = "musicstreamtfstatefinal"          # Match bootstrap storage name
+       container_name      = "tfstate"
+       key                 = "terraform.tfstate"
+     }
+   }
+   ```
+
+4. **Resource Naming Changes**
+   The following resources will be automatically renamed based on your project name change:
+   - Resource Groups:
+     - Main: `musicstreamapp-final-dev-rg`
+     - Databricks: `musicstreamapp-final-dev-databricks-rg`
+   - Storage Account: `musicstreamappfinaldls`
+   - Key Vault: `musicstreamappfinaldevkv`
+   - Container Registry: `musicstreamappfinaldevacr`
+   - AKS Cluster: `musicstreamapp-final-dev-aks`
+   - Databricks Workspace: `musicstreamapp-final-dev-databricks`
+   - Virtual Networks:
+     - Main: `musicstreamapp-final-dev-vnet`
+     - Databricks: `musicstreamapp-final-dev-databricks-vnet`
+
+5. **Reinitialize and Apply**
    ```bash
+   # First, apply bootstrap configuration
+   cd bootstrap
+   terraform init
    terraform plan
    terraform apply
+
+   # Then, initialize and apply main configuration
+   cd ../main
+   terraform init -reconfigure
+   terraform plan
+   terraform apply
+   ```
+
+6. **Verify Resources**
+   After applying the configuration, verify the resources are created with the new names:
+   ```bash
+   # List resource groups
+   az group list --query "[].name" -o table
+
+   # Check AKS cluster
+   az aks show --resource-group musicstreamapp-final-dev-rg --name musicstreamapp-final-dev-aks
+
+   # Verify storage account
+   az storage account show --resource-group musicstreamapp-final-dev-rg --name musicstreamappfinaldls
    ```
 
 ## Testing

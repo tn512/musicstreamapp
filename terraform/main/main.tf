@@ -63,7 +63,7 @@ module "aks" {
 module "storage" {
   source = "../modules/storage"
   
-  name                = "${replace(local.resource_prefix, "-", "")}dls"
+  name                = "${replace(var.project, "-", "")}dls"
   resource_group_name = module.resource_group.name
   location           = module.resource_group.location
   tags               = local.common_tags
