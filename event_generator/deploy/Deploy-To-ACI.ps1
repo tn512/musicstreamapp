@@ -1,13 +1,13 @@
 # Configuration
-$ACR_NAME = "musicstreamappp02devacr"
-$RESOURCE_GROUP = "musicstreamapp-p02-dev-rg"
+$ACR_NAME = "musicstreamappfinaldevacr"
+$RESOURCE_GROUP = "musicstreamapp-final-dev-rg"
 $LOCATION = "eastus"
 $CONTAINER_NAME = "event-generator"
 $TIMESTAMP = Get-Date -Format "yyyyMMddHHmmss"
 $IMAGE_TAG = "v$TIMESTAMP"
 $IMAGE_NAME = "$ACR_NAME.azurecr.io/event-generator:$IMAGE_TAG"
 # Single Kafka broker with external IP (LoadBalancer service)
-$KAFKA_BOOTSTRAP_SERVERS = "172.212.37.12:9092"
+$KAFKA_BOOTSTRAP_SERVERS = "4.156.34.27:9092"
 
 # Build and push the Docker image with the new tag
 Write-Host "Building and pushing Docker image with tag $IMAGE_TAG..." -ForegroundColor Green

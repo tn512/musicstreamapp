@@ -12,13 +12,18 @@ import pandas as pd
 import numpy as np
 from faker import Faker
 from kafka import KafkaProducer
+from kafka.client_async import KafkaClient
+from kafka.cluster import ClusterMetadata
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Change to DEBUG for more verbose logging
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Enable debug logging for kafka
+logging.getLogger('kafka').setLevel(logging.DEBUG)
 
 def json_serial(obj: Any) -> Any:
     """JSON serializer for objects not serializable by default json code"""
@@ -27,6 +32,24 @@ def json_serial(obj: Any) -> Any:
     if isinstance(obj, (np.float64, np.float32, np.float16)):
         return float(obj)
     raise TypeError(f'Type {type(obj)} not serializable')
+
+class ExternalBrokerMetadata(ClusterMetadata):
+    def __init__(self, external_broker: str):
+        super().__init__()
+        self.external_broker = external_broker
+
+    def brokers(self):
+        """Override to always return the external broker."""
+        return {0: (self.external_broker.split(':')[0], int(self.external_broker.split(':')[1]))}
+
+class ExternalBrokerClient(KafkaClient):
+    def __init__(self, external_broker: str, **configs):
+        self.external_broker = external_broker
+        super().__init__(**configs)
+
+    def _get_metadata(self):
+        """Override to use external broker metadata."""
+        return ExternalBrokerMetadata(self.external_broker)
 
 # Page transition probabilities
 PAGE_TRANSITIONS = {

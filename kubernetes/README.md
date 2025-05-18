@@ -1,26 +1,21 @@
 # Kubernetes Deployment
 
-This directory contains Kubernetes manifests for deploying Kafka and Airflow on Azure Kubernetes Service (AKS).
+This directory contains Kubernetes manifests for deploying Kafka on Azure Kubernetes Service (AKS).
 
 ## Directory Structure
 
 ```
 kubernetes/
-├── kafka/                # Kafka cluster deployment
-│   ├── values.yaml       # Helm chart values for Kafka
-│   └── kafka-topics.md   # Documentation for Kafka topics
-└── airflow/              # Airflow deployment
-    ├── webserver/        # Airflow webserver
-    ├── scheduler/        # Airflow scheduler
-    ├── workers/          # Airflow workers
-    └── dags/             # Airflow DAGs
+└── kafka/                # Kafka cluster deployment
+    ├── values.yaml       # Helm chart values for Kafka
+    └── kafka-topics.md   # Documentation for Kafka topics
 ```
 
 ## Prerequisites
 
 1. **Access to AKS Cluster**
    ```bash
-   az aks get-credentials --resource-group musicstreamapp-dev-rg --name musicstreamapp-dev-aks
+   az aks get-credentials --resource-group musicstreamapp-final-dev-rg --name musicstreamapp-final-dev-aks
    ```
 
 2. **Helm Installation**
@@ -32,7 +27,6 @@ kubernetes/
 3. **Required Namespaces**
    ```bash
    kubectl create namespace kafka
-   kubectl create namespace airflow
    ```
 
 ## Deployment Instructions
@@ -45,9 +39,9 @@ kubernetes/
    helm repo add bitnami https://charts.bitnami.com/bitnami
    helm repo update
 
-   # Deploy Kafka using the values.yaml file
+   # Deploy Kafka using the values.yaml file (using version 24.0.5)
    cd kubernetes/kafka
-   helm install kafka bitnami/kafka -f values.yaml -n kafka
+   helm install kafka bitnami/kafka --version 24.0.5 -f values.yaml -n kafka
    ```
 
 2. **Configure External Access - IMPORTANT**
@@ -118,21 +112,6 @@ kubernetes/
    kubectl get pods -n kafka
    ```
 
-### 2. Airflow Deployment
-
-1. **Deploy Airflow Components**
-   ```bash
-   cd airflow
-   kubectl apply -f webserver/
-   kubectl apply -f scheduler/
-   kubectl apply -f workers/
-   ```
-
-2. **Deploy DAGs**
-   ```bash
-   kubectl apply -f dags/
-   ```
-
 ## Testing
 
 ### 1. Verify Kafka Deployment
@@ -164,22 +143,8 @@ kubernetes/
    ./Deploy-To-ACI.ps1
    
    # Check the logs to verify successful connections
-   az container logs --resource-group musicstreamapp-dev-rg --name event-generator
+   az container logs --resource-group musicstreamapp-final-dev-rg --name event-generator
    ```
-
-### 2. Verify Airflow Deployment
-
-1. **Check Pods**
-   ```bash
-   kubectl get pods -n airflow
-   ```
-
-2. **Access Airflow UI**
-   ```bash
-   # Port forward Airflow webserver
-   kubectl port-forward -n airflow svc/airflow-webserver 8080:8080
-   ```
-   Then open http://localhost:8080 in your browser
 
 ## Maintenance
 
@@ -188,11 +153,6 @@ kubernetes/
 1. **Scale Kafka Brokers**
    ```bash
    kubectl scale statefulset kafka -n kafka --replicas=3
-   ```
-
-2. **Scale Airflow Workers**
-   ```bash
-   kubectl scale deployment airflow-worker -n airflow --replicas=3
    ```
 
 ### 2. Updates
@@ -204,14 +164,6 @@ kubernetes/
    helm upgrade kafka bitnami/kafka -n kafka -f values.yaml
    ```
 
-2. **Update Airflow Configuration**
-   ```bash
-   kubectl apply -f airflow/airflow-configmap.yaml
-   kubectl rollout restart deployment airflow-webserver -n airflow
-   kubectl rollout restart deployment airflow-scheduler -n airflow
-   kubectl rollout restart deployment airflow-worker -n airflow
-   ```
-
 ## Troubleshooting
 
 ### 1. Common Issues
@@ -220,11 +172,9 @@ kubernetes/
    ```bash
    # Check pod logs
    kubectl logs -n kafka kafka-broker-0
-   kubectl logs -n airflow airflow-webserver-0
    
    # Check pod events
    kubectl describe pod -n kafka kafka-broker-0
-   kubectl describe pod -n airflow airflow-webserver-0
    ```
 
 2. **Storage Issues**
@@ -232,7 +182,6 @@ kubernetes/
    # Check persistent volumes
    kubectl get pv
    kubectl get pvc -n kafka
-   kubectl get pvc -n airflow
    ```
 
 3. **Kafka Connection Issues**
@@ -253,13 +202,11 @@ kubernetes/
 1. **Check Services**
    ```bash
    kubectl get svc -n kafka
-   kubectl get svc -n airflow
    ```
 
 2. **Check Network Policies**
    ```bash
    kubectl get networkpolicies -n kafka
-   kubectl get networkpolicies -n airflow
    ```
 
 ## Monitoring
@@ -269,7 +216,6 @@ kubernetes/
 ```bash
 # Check resource usage
 kubectl top pods -n kafka
-kubectl top pods -n airflow
 
 # Check node resources
 kubectl top nodes
@@ -280,14 +226,10 @@ kubectl top nodes
 ```bash
 # Kafka logs
 kubectl logs -f -n kafka kafka-broker-0
-
-# Airflow logs
-kubectl logs -f -n airflow airflow-webserver-0
 ```
 
 ## References
 
 - [Kafka Documentation](https://kafka.apache.org/documentation/)
-- [Airflow Documentation](https://airflow.apache.org/docs/)
 - [Kubernetes Documentation](https://kubernetes.io/docs/home/)
 - [Helm Documentation](https://helm.sh/docs/) 
